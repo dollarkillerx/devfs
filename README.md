@@ -122,6 +122,36 @@ func main() {
 }
 ```
 
+## Docker Compose
+
+Start devfs with Docker Compose for a quick containerized deployment:
+
+```bash
+docker compose up -d
+# or
+make compose-up
+```
+
+Configure via environment variables or a `.env` file in the project root:
+
+```env
+DEVFS_PORT=9000
+DEVFS_ACCESS_KEY=mykey
+DEVFS_SECRET_KEY=mysecret
+DEVFS_WEB_USER=admin
+DEVFS_WEB_PASSWORD=secretpass
+```
+
+The data volume (`devfs-data`) persists across container restarts.
+
+Stop the service:
+
+```bash
+docker compose down
+# or
+make compose-down
+```
+
 ## Configuration
 
 Configuration is resolved in order: **CLI flags > environment variables > config file > defaults**.
@@ -201,13 +231,27 @@ Bucket policies (`public_read`, `public_write`) can allow unauthenticated access
 
 ## Web Management UI
 
-Enable the web UI by configuring `[auth.web]` with a username and password. Once enabled, the UI is available at `http://host:port/_web/`.
+Enable the web UI by setting a username and password via `[auth.web]` in `devfs.toml`, CLI flags, or environment variables (`DEVFS_WEB_USER` / `DEVFS_WEB_PASSWORD`). The UI is then available at:
 
-Features:
-- Bucket management (create, delete)
-- Object browser with upload and download
-- API key management (create, revoke)
-- Per-bucket permission assignment for API keys
+```
+http://host:port/_web/
+```
+
+### Features
+
+- **Bucket management** — create and delete buckets
+- **Object browser** — upload, download, and delete objects within each bucket
+- **API key management** — create and revoke access/secret key pairs
+- **Per-bucket permissions** — assign `read` or `read_write` access per key per bucket
+
+### Typical workflow
+
+1. Open `http://127.0.0.1:9000/_web/` and log in with your configured credentials
+2. Create a bucket from the dashboard
+3. Browse into the bucket and upload files
+4. Create an API key under **API Keys**
+5. Assign the key per-bucket permissions (e.g. `read_write` for `my-bucket`)
+6. Use the generated access/secret key pair in any S3 client
 
 Sessions are cookie-based with a 24-hour TTL and stored in memory (lost on server restart).
 
