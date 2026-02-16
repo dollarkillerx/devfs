@@ -12,8 +12,10 @@ COPY benches/ benches/
 
 RUN cargo build --release
 
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/devfs .
 EXPOSE 9000
