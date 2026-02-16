@@ -26,3 +26,5 @@ target
 .claude/
 .codex/
 .worktrees/
+./tmp/
+.log/

@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use http_body_util::BodyExt;
 use md5::{Digest, Md5};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -14,10 +15,16 @@ pub struct FsStorage {
     root: PathBuf,
 }
 
+#[cfg(any(test, feature = "bench-internals"))]
 #[derive(Debug)]
 pub struct GetObjectResult {
     pub metadata: ObjectMetadata,
     pub body: Vec<u8>,
+}
+
+pub struct GetObjectStreamResult {
+    pub metadata: ObjectMetadata,
+    pub file: tokio::fs::File,
 }
 
 pub struct ListObjectsV2Result {
@@ -141,6 +148,7 @@ impl FsStorage {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "bench-internals"))]
     pub async fn put_object(
         &self,
         bucket: &str,
@@ -207,6 +215,101 @@ impl FsStorage {
         Ok(etag)
     }
 
+    pub async fn put_object_stream(
+        &self,
+        bucket: &str,
+        key: &str,
+        body: axum::body::Body,
+        content_type: Option<String>,
+        custom_metadata: HashMap<String, String>,
+        _content_length: Option<u64>,
+    ) -> Result<String, S3Error> {
+        let bucket_path = self.bucket_path(bucket);
+        if !bucket_path.exists() {
+            return Err(S3Error::no_such_bucket(bucket));
+        }
+
+        // Create object file
+        let obj_path = self.object_path(bucket, key);
+        if let Some(parent) = obj_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| S3Error::internal(format!("Failed to create dirs: {}", e)))?;
+        }
+
+        let mut file = fs::File::create(&obj_path)
+            .await
+            .map_err(|e| S3Error::internal(format!("Failed to create file: {}", e)))?;
+
+        // Stream body frames to disk, computing MD5 incrementally
+        let mut hasher = Md5::new();
+        let mut total_bytes: u64 = 0;
+        let mut body = body;
+
+        loop {
+            match body.frame().await {
+                Some(Ok(frame)) => {
+                    if let Ok(data) = frame.into_data() {
+                        hasher.update(&data);
+                        total_bytes += data.len() as u64;
+                        if let Err(e) = file.write_all(&data).await {
+                            // Clean up partial file on write error
+                            drop(file);
+                            let _ = fs::remove_file(&obj_path).await;
+                            return Err(S3Error::internal(format!("Failed to write file: {}", e)));
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    // Clean up partial file on stream error
+                    drop(file);
+                    let _ = fs::remove_file(&obj_path).await;
+                    return Err(S3Error::internal(format!("Failed to read body: {}", e)));
+                }
+                None => break,
+            }
+        }
+
+        file.flush()
+            .await
+            .map_err(|e| S3Error::internal(format!("Failed to flush file: {}", e)))?;
+
+        let etag = format!("\"{}\"", hex::encode(hasher.finalize()));
+
+        // Determine content type
+        let ct = content_type.unwrap_or_else(|| {
+            mime_guess::from_path(key)
+                .first_or_octet_stream()
+                .to_string()
+        });
+
+        // Write metadata
+        let now = Utc::now().to_rfc3339();
+        let metadata = ObjectMetadata {
+            content_type: ct,
+            content_length: total_bytes,
+            etag: etag.clone(),
+            last_modified: now,
+            custom_metadata,
+        };
+
+        let meta_path = self.meta_path(bucket, key);
+        if let Some(parent) = meta_path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| S3Error::internal(format!("Failed to create meta dirs: {}", e)))?;
+        }
+
+        let meta_json = serde_json::to_string_pretty(&metadata)
+            .map_err(|e| S3Error::internal(format!("Failed to serialize metadata: {}", e)))?;
+        fs::write(&meta_path, meta_json)
+            .await
+            .map_err(|e| S3Error::internal(format!("Failed to write metadata: {}", e)))?;
+
+        Ok(etag)
+    }
+
+    #[cfg(any(test, feature = "bench-internals"))]
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectResult, S3Error> {
         let bucket_path = self.bucket_path(bucket);
         if !bucket_path.exists() {
@@ -224,6 +327,29 @@ impl FsStorage {
             .map_err(|e| S3Error::internal(format!("Failed to read object: {}", e)))?;
 
         Ok(GetObjectResult { metadata, body })
+    }
+
+    pub async fn get_object_stream(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<GetObjectStreamResult, S3Error> {
+        let bucket_path = self.bucket_path(bucket);
+        if !bucket_path.exists() {
+            return Err(S3Error::no_such_bucket(bucket));
+        }
+
+        let obj_path = self.object_path(bucket, key);
+        if !obj_path.exists() || obj_path.is_dir() {
+            return Err(S3Error::no_such_key(key));
+        }
+
+        let metadata = self.read_metadata(bucket, key).await?;
+        let file = fs::File::open(&obj_path)
+            .await
+            .map_err(|e| S3Error::internal(format!("Failed to open object: {}", e)))?;
+
+        Ok(GetObjectStreamResult { metadata, file })
     }
 
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), S3Error> {
@@ -275,37 +401,24 @@ impl FsStorage {
 
         let prefix = params.prefix.as_deref().unwrap_or("");
         let max_keys = params.max_keys;
-
-        // Collect all keys recursively
-        let mut all_keys = Vec::new();
-        self.collect_keys(&bucket_path, &bucket_path, &mut all_keys)
-            .await?;
-        all_keys.sort();
-
-        // Apply prefix filter
-        let filtered: Vec<String> = all_keys
-            .into_iter()
-            .filter(|k| k.starts_with(prefix))
-            .collect();
-
-        // Apply start_after / continuation_token
         let start_after = params
             .continuation_token
             .as_deref()
             .or(params.start_after.as_deref());
 
-        let filtered: Vec<String> = if let Some(start) = start_after {
-            filtered.into_iter().filter(|k| k.as_str() > start).collect()
-        } else {
-            filtered
-        };
-
         // Handle delimiter grouping
         if let Some(delimiter) = &params.delimiter {
+            // With delimiter, we need all matching keys to correctly compute
+            // common prefixes (can't predict folding for early termination).
+            // But we still benefit from prefix pruning.
+            let mut all_keys = Vec::new();
+            self.collect_keys_sorted(&bucket_path, &bucket_path, prefix, start_after, usize::MAX, &mut all_keys)
+                .await?;
+
             let mut objects = Vec::new();
             let mut common_prefixes = BTreeSet::new();
 
-            for key in &filtered {
+            for key in &all_keys {
                 let after_prefix = &key[prefix.len()..];
                 if let Some(pos) = after_prefix.find(delimiter.as_str()) {
                     let cp = format!("{}{}", prefix, &after_prefix[..=pos + delimiter.len() - 1]);
@@ -328,6 +441,8 @@ impl FsStorage {
             let mut obj_idx = 0;
             let mut cp_idx = 0;
 
+            // Collect keys that need metadata
+            let mut keys_needing_meta = Vec::new();
             while count < max_keys && (obj_idx < objects.len() || cp_idx < cp_vec.len()) {
                 let use_obj = if obj_idx < objects.len() && cp_idx < cp_vec.len() {
                     objects[obj_idx] < cp_vec[cp_idx]
@@ -336,14 +451,14 @@ impl FsStorage {
                 };
 
                 if use_obj {
-                    let key = &objects[obj_idx];
-                    let meta = self.read_metadata(bucket, key).await?;
-                    last_key = Some(key.clone());
+                    keys_needing_meta.push((result_objects.len(), objects[obj_idx].clone()));
+                    last_key = Some(objects[obj_idx].clone());
+                    // Push placeholder, will be filled by concurrent read
                     result_objects.push(ObjectEntry {
-                        key: key.clone(),
-                        size: meta.content_length,
-                        etag: meta.etag,
-                        last_modified: meta.last_modified,
+                        key: objects[obj_idx].clone(),
+                        size: 0,
+                        etag: String::new(),
+                        last_modified: String::new(),
                     });
                     obj_idx += 1;
                 } else {
@@ -354,6 +469,27 @@ impl FsStorage {
                 count += 1;
             }
 
+            // Concurrent metadata reads
+            let mut set = tokio::task::JoinSet::new();
+            for (idx, key) in keys_needing_meta {
+                let storage = self.clone();
+                let bucket = bucket.to_string();
+                set.spawn(async move {
+                    let meta = storage.read_metadata(&bucket, &key).await?;
+                    Ok::<_, S3Error>((idx, key, meta))
+                });
+            }
+            while let Some(res) = set.join_next().await {
+                let (idx, key, meta) = res
+                    .map_err(|e| S3Error::internal(format!("Task join error: {}", e)))??;
+                result_objects[idx] = ObjectEntry {
+                    key,
+                    size: meta.content_length,
+                    etag: meta.etag,
+                    last_modified: meta.last_modified,
+                };
+            }
+
             Ok(ListObjectsV2Result {
                 objects: result_objects,
                 common_prefixes: result_prefixes,
@@ -361,16 +497,33 @@ impl FsStorage {
                 next_continuation_token: if is_truncated { last_key } else { None },
             })
         } else {
-            // No delimiter — flat listing
-            let is_truncated = filtered.len() > max_keys as usize;
-            let keys: Vec<String> = filtered.into_iter().take(max_keys as usize).collect();
+            // No delimiter — flat listing with early termination
+            let keys = self
+                .collect_keys_filtered(&bucket_path, prefix, start_after, max_keys as usize)
+                .await?;
+
+            let is_truncated = keys.len() > max_keys as usize;
+            let keys: Vec<String> = keys.into_iter().take(max_keys as usize).collect();
             let last_key = keys.last().cloned();
 
-            let mut objects = Vec::new();
-            for key in &keys {
-                let meta = self.read_metadata(bucket, key).await?;
-                objects.push(ObjectEntry {
-                    key: key.clone(),
+            // Concurrent metadata reads
+            let num_keys = keys.len();
+            let mut result_objects: Vec<Option<ObjectEntry>> = (0..num_keys).map(|_| None).collect();
+
+            let mut set = tokio::task::JoinSet::new();
+            for (idx, key) in keys.into_iter().enumerate() {
+                let storage = self.clone();
+                let bucket = bucket.to_string();
+                set.spawn(async move {
+                    let meta = storage.read_metadata(&bucket, &key).await?;
+                    Ok::<_, S3Error>((idx, key, meta))
+                });
+            }
+            while let Some(res) = set.join_next().await {
+                let (idx, key, meta) = res
+                    .map_err(|e| S3Error::internal(format!("Task join error: {}", e)))??;
+                result_objects[idx] = Some(ObjectEntry {
+                    key,
                     size: meta.content_length,
                     etag: meta.etag,
                     last_modified: meta.last_modified,
@@ -378,7 +531,7 @@ impl FsStorage {
             }
 
             Ok(ListObjectsV2Result {
-                objects,
+                objects: result_objects.into_iter().flatten().collect(),
                 common_prefixes: Vec::new(),
                 is_truncated,
                 next_continuation_token: if is_truncated { last_key } else { None },
@@ -386,26 +539,44 @@ impl FsStorage {
         }
     }
 
-    async fn read_metadata(&self, bucket: &str, key: &str) -> Result<ObjectMetadata, S3Error> {
-        let meta_path = self.meta_path(bucket, key);
-        let data = fs::read_to_string(&meta_path)
-            .await
-            .map_err(|_| S3Error::no_such_key(key))?;
-        serde_json::from_str(&data)
-            .map_err(|e| S3Error::internal(format!("Corrupt metadata for {}: {}", key, e)))
+    /// Collect keys filtered by prefix and start_after, returning at most `limit + 1` keys.
+    /// The extra key is used to detect truncation.
+    async fn collect_keys_filtered(
+        &self,
+        bucket_path: &Path,
+        prefix: &str,
+        start_after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>, S3Error> {
+        let mut keys = Vec::new();
+        self.collect_keys_sorted(bucket_path, bucket_path, prefix, start_after, limit + 1, &mut keys)
+            .await?;
+        Ok(keys)
     }
 
-    async fn collect_keys(
+    /// Recursively collect keys in sorted order with prefix pruning and early termination.
+    /// Reads directory entries sorted by name, skips directories that can't contain matching keys,
+    /// and stops once `limit` keys have been collected.
+    async fn collect_keys_sorted(
         &self,
         bucket_path: &Path,
         dir: &Path,
-        keys: &mut Vec<String>,
+        prefix: &str,
+        start_after: Option<&str>,
+        limit: usize,
+        result: &mut Vec<String>,
     ) -> Result<(), S3Error> {
+        if result.len() >= limit {
+            return Ok(());
+        }
+
         let mut entries = match fs::read_dir(dir).await {
             Ok(e) => e,
             Err(_) => return Ok(()),
         };
 
+        // Collect and sort directory entries by name
+        let mut dir_entries = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
@@ -415,6 +586,14 @@ impl FsStorage {
             if name == ".meta" {
                 continue;
             }
+            dir_entries.push(entry);
+        }
+        dir_entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for entry in dir_entries {
+            if result.len() >= limit {
+                return Ok(());
+            }
 
             let path = entry.path();
             let ft = entry
@@ -423,18 +602,64 @@ impl FsStorage {
                 .map_err(|e| S3Error::internal(e.to_string()))?;
 
             if ft.is_dir() {
-                Box::pin(self.collect_keys(bucket_path, &path, keys)).await?;
+                // Compute the directory's prefix relative to bucket root
+                let dir_prefix = format!(
+                    "{}/",
+                    path.strip_prefix(bucket_path)
+                        .unwrap()
+                        .to_string_lossy()
+                );
+
+                // Prefix pruning: skip directories that can't contain matching keys
+                if !prefix.is_empty()
+                    && !dir_prefix.starts_with(prefix)
+                    && !prefix.starts_with(&dir_prefix)
+                {
+                    continue;
+                }
+
+                Box::pin(self.collect_keys_sorted(
+                    bucket_path,
+                    &path,
+                    prefix,
+                    start_after,
+                    limit,
+                    result,
+                ))
+                .await?;
             } else {
                 let key = path
                     .strip_prefix(bucket_path)
                     .unwrap()
                     .to_string_lossy()
                     .to_string();
-                keys.push(key);
+
+                // Apply prefix filter
+                if !key.starts_with(prefix) {
+                    continue;
+                }
+
+                // Apply start_after filter
+                if let Some(start) = start_after {
+                    if key.as_str() <= start {
+                        continue;
+                    }
+                }
+
+                result.push(key);
             }
         }
 
         Ok(())
+    }
+
+    async fn read_metadata(&self, bucket: &str, key: &str) -> Result<ObjectMetadata, S3Error> {
+        let meta_path = self.meta_path(bucket, key);
+        let data = fs::read_to_string(&meta_path)
+            .await
+            .map_err(|_| S3Error::no_such_key(key))?;
+        serde_json::from_str(&data)
+            .map_err(|e| S3Error::internal(format!("Corrupt metadata for {}: {}", key, e)))
     }
 
     async fn cleanup_empty_parents(&self, bucket: &str, key: &str) {
@@ -576,6 +801,61 @@ mod tests {
             result.metadata.custom_metadata.get("author").unwrap(),
             "alice"
         );
+    }
+
+    #[tokio::test]
+    async fn put_object_stream_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = make_storage(tmp.path());
+        storage.create_bucket("b").await.unwrap();
+
+        let body = axum::body::Body::from("streamed upload data");
+        let etag = storage
+            .put_object_stream(
+                "b",
+                "uploaded.txt",
+                body,
+                Some("text/plain".to_string()),
+                HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Verify via get_object
+        let result = storage.get_object("b", "uploaded.txt").await.unwrap();
+        assert_eq!(result.body, b"streamed upload data");
+        assert_eq!(result.metadata.content_type, "text/plain");
+        assert_eq!(result.metadata.etag, etag);
+        assert_eq!(result.metadata.content_length, 20);
+    }
+
+    #[tokio::test]
+    async fn get_object_stream_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = make_storage(tmp.path());
+        storage.create_bucket("b").await.unwrap();
+        storage
+            .put_object(
+                "b",
+                "stream.txt",
+                Bytes::from("streaming content"),
+                Some("text/plain".to_string()),
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
+
+        let result = storage.get_object_stream("b", "stream.txt").await.unwrap();
+        assert_eq!(result.metadata.content_type, "text/plain");
+        assert_eq!(result.metadata.content_length, 17);
+
+        // Read the file to verify contents
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::new();
+        let mut file = result.file;
+        file.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(buf, b"streaming content");
     }
 
     #[tokio::test]

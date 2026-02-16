@@ -1,21 +1,11 @@
-mod auth;
-mod config;
-mod dispatcher;
-mod error;
-mod handlers;
-mod middleware;
-mod storage;
-mod types;
-mod xml;
-
 use axum::middleware as axum_mw;
 use axum::Router;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
-use crate::config::Config;
-use crate::dispatcher::dispatch;
-use crate::middleware::s3_operation_middleware;
+use devfs::config::Config;
+use devfs::dispatcher::dispatch;
+use devfs::middleware::s3_operation_middleware;
 
 #[tokio::main]
 async fn main() {

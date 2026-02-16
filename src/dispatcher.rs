@@ -1,7 +1,5 @@
-use axum::body::Bytes;
 use axum::extract::{Request, State};
 use axum::response::Response;
-use http_body_util::BodyExt;
 
 use crate::error::{S3Error, S3ErrorCode};
 use crate::handlers;
@@ -46,9 +44,22 @@ pub async fn dispatch(
             handlers::object::list_objects_v2(&state, &bucket, &params).await
         }
         S3Operation::PutObject { bucket, key } => {
-            let body = collect_body(request).await?;
-            handlers::object::put_object(&state, &bucket, &key, body, content_type, custom_metadata)
-                .await
+            let content_length = request
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            let body = request.into_body();
+            handlers::object::put_object(
+                &state,
+                &bucket,
+                &key,
+                body,
+                content_type,
+                custom_metadata,
+                content_length,
+            )
+            .await
         }
         S3Operation::GetObject { bucket, key } => {
             handlers::object::get_object(&state, &bucket, &key).await
@@ -121,11 +132,3 @@ mod tests {
     }
 }
 
-async fn collect_body(request: Request) -> Result<Bytes, S3Error> {
-    request
-        .into_body()
-        .collect()
-        .await
-        .map(|c| c.to_bytes())
-        .map_err(|e| S3Error::internal(format!("Failed to read request body: {}", e)))
-}

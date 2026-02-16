@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use axum::body::Body;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
+use tokio::io::BufReader;
+use tokio_util::io::ReaderStream;
 
 use crate::error::S3Error;
 use crate::types::{AppState, ListObjectsV2Params};
@@ -13,13 +14,14 @@ pub async fn put_object(
     state: &AppState,
     bucket: &str,
     key: &str,
-    body: Bytes,
+    body: Body,
     content_type: Option<String>,
     custom_metadata: HashMap<String, String>,
+    content_length: Option<u64>,
 ) -> Result<Response, S3Error> {
     let etag = state
         .storage
-        .put_object(bucket, key, body, content_type, custom_metadata)
+        .put_object_stream(bucket, key, body, content_type, custom_metadata, content_length)
         .await?;
 
     Ok((
@@ -38,7 +40,7 @@ pub async fn get_object(
     bucket: &str,
     key: &str,
 ) -> Result<Response, S3Error> {
-    let result = state.storage.get_object(bucket, key).await?;
+    let result = state.storage.get_object_stream(bucket, key).await?;
     let meta = &result.metadata;
 
     let mut builder = Response::builder()
@@ -54,8 +56,12 @@ pub async fn get_object(
         builder = builder.header(format!("x-amz-meta-{}", k), v);
     }
 
+    let reader = BufReader::with_capacity(64 * 1024, result.file);
+    let stream = ReaderStream::with_capacity(reader, 64 * 1024);
+    let body = Body::from_stream(stream);
+
     builder
-        .body(Body::from(result.body))
+        .body(body)
         .map_err(|e| S3Error::internal(e.to_string()))
 }
 

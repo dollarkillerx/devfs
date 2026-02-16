@@ -104,6 +104,41 @@ data/
     └── ...
 ```
 
+## Benchmarks
+
+Run with `CI=true cargo bench --features bench-internals`.
+
+### Streaming Upload
+
+| Size | Time | Throughput |
+|------|------|------------|
+| 1 KB | 107.6 µs | 9.08 MiB/s |
+| 1 MB | 1.58 ms | 634 MiB/s |
+| 10 MB | 14.0 ms | 712 MiB/s |
+
+### Streaming Download
+
+| Size | Time | Throughput |
+|------|------|------------|
+| 1 KB | 42.9 µs | 22.7 MiB/s |
+| 1 MB | 80.8 µs | 12.1 GiB/s |
+| 10 MB | 539 µs | 18.1 GiB/s |
+
+### ListObjectsV2
+
+| Scenario | 100 | 1,000 | 10,000 |
+|----------|-----|-------|--------|
+| flat | 1.31 ms | 17.0 ms | 184 ms |
+| prefix_pruning | — | 1.18 ms | 18.9 ms |
+| delimiter | — | 1.20 ms | 11.6 ms |
+
+### ETag Consistency
+
+| Size | Time |
+|------|------|
+| 1 KB | 211 µs |
+| 1 MB | 2.85 ms |
+
 ## Project Structure
 
 | File | LOC | Description |

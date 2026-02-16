@@ -25,7 +25,18 @@ bytes = "1"
 mime_guess = "2"
 serde_json = "1"
 http-body-util = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
 toml = "0.8"
+
+[features]
+bench-internals = []
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "storage_bench"
+harness = false
+required-features = ["bench-internals"]
