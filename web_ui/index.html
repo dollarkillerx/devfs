@@ -4,159 +4,271 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>devfs - Management</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="/_web/assets/style.css">
 </head>
 <body>
   <div id="app">
     <!-- Login -->
     <div id="login-page" class="page">
-      <div class="login-card">
-        <h1>devfs</h1>
-        <p class="subtitle">S3-Compatible Storage</p>
-        <form id="login-form">
-          <input type="text" id="login-user" placeholder="Username" autocomplete="username" required>
-          <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password" required>
-          <button type="submit">Sign In</button>
-          <div id="login-error" class="error" hidden></div>
-        </form>
-      </div>
+      <section class="hero is-fullheight">
+        <div class="hero-body">
+          <div class="container">
+            <div class="columns is-centered">
+              <div class="column is-4">
+                <div class="box">
+                  <h1 class="title is-4 has-text-centered">devfs</h1>
+                  <p class="subtitle is-6 has-text-centered has-text-grey">S3-Compatible Storage</p>
+                  <form id="login-form">
+                    <div class="field">
+                      <div class="control has-icons-left">
+                        <input class="input" type="text" id="login-user" placeholder="Username" autocomplete="username" required>
+                        <span class="icon is-small is-left"><i class="fas fa-user"></i></span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="control has-icons-left">
+                        <input class="input" type="password" id="login-pass" placeholder="Password" autocomplete="current-password" required>
+                        <span class="icon is-small is-left"><i class="fas fa-lock"></i></span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="control">
+                        <button class="button is-primary is-fullwidth" type="submit">Sign In</button>
+                      </div>
+                    </div>
+                    <p id="login-error" class="help is-danger" hidden></p>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- Dashboard -->
     <div id="dashboard-page" class="page" hidden>
-      <nav>
-        <span class="brand">devfs</span>
-        <div class="nav-links">
-          <a href="#" data-page="buckets" class="active">Buckets</a>
-          <a href="#" data-page="keys">API Keys</a>
+      <nav class="navbar is-white is-fixed-top has-shadow" role="navigation" aria-label="main navigation">
+        <div class="navbar-brand">
+          <a class="navbar-item has-text-weight-bold is-size-5" href="#">devfs</a>
+          <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false" data-target="navMenu">
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+          </a>
         </div>
-        <button id="logout-btn" class="btn-text">Logout</button>
+        <div id="navMenu" class="navbar-menu">
+          <div class="navbar-start">
+            <a class="navbar-item is-active" href="#" data-page="buckets">Buckets</a>
+            <a class="navbar-item" href="#" data-page="keys">API Keys</a>
+          </div>
+          <div class="navbar-end">
+            <div class="navbar-item">
+              <button id="logout-btn" class="button is-text is-small">Logout</button>
+            </div>
+          </div>
+        </div>
       </nav>
 
       <!-- Buckets Section -->
       <div id="buckets-section" class="section">
-        <div class="section-header">
-          <h2>Buckets</h2>
-          <div class="inline-form">
-            <input type="text" id="new-bucket-name" placeholder="Bucket name">
-            <button id="create-bucket-btn">Create</button>
+        <div class="container" style="max-width: 1100px;">
+          <div class="level">
+            <div class="level-left">
+              <div class="level-item"><h2 class="title is-5">Buckets</h2></div>
+            </div>
+            <div class="level-right">
+              <div class="level-item">
+                <div class="field has-addons">
+                  <div class="control">
+                    <input class="input is-small" type="text" id="new-bucket-name" placeholder="Bucket name">
+                  </div>
+                  <div class="control">
+                    <button id="create-bucket-btn" class="button is-primary is-small">Create</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+          <table id="buckets-table" class="table is-striped is-hoverable is-fullwidth">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Created</th>
+                <th>Public Read</th>
+                <th>Public Write</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
-        <table id="buckets-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Created</th>
-              <th>Public Read</th>
-              <th>Public Write</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
       </div>
 
       <!-- Bucket Detail -->
       <div id="bucket-detail-section" class="section" hidden>
-        <div class="section-header">
-          <button id="back-to-buckets" class="btn-text">&larr; Back</button>
-          <h2 id="bucket-detail-name"></h2>
-        </div>
-
-        <div class="policy-bar">
-          <label><input type="checkbox" id="policy-public-read"> Public Read</label>
-          <label><input type="checkbox" id="policy-public-write"> Public Write</label>
-          <button id="save-policy-btn" class="btn-small">Save Policy</button>
-        </div>
-
-        <div class="object-toolbar">
-          <div id="breadcrumb"></div>
-          <div class="upload-area">
-            <input type="file" id="upload-file" multiple>
-            <button id="upload-btn">Upload</button>
+        <div class="container" style="max-width: 1100px;">
+          <div class="level">
+            <div class="level-left">
+              <div class="level-item">
+                <button id="back-to-buckets" class="button is-text is-small">&larr; Back</button>
+              </div>
+              <div class="level-item">
+                <h2 id="bucket-detail-name" class="title is-5"></h2>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <table id="objects-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Size</th>
-              <th>Last Modified</th>
-              <th class="col-etag">ETag</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+          <div class="box">
+            <div class="field is-grouped">
+              <div class="control">
+                <label class="checkbox">
+                  <input type="checkbox" id="policy-public-read"> Public Read
+                </label>
+              </div>
+              <div class="control">
+                <label class="checkbox">
+                  <input type="checkbox" id="policy-public-write"> Public Write
+                </label>
+              </div>
+              <div class="control">
+                <button id="save-policy-btn" class="button is-primary is-small">Save Policy</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="level mb-3">
+            <div class="level-left">
+              <div class="level-item">
+                <nav class="breadcrumb" aria-label="breadcrumbs">
+                  <ul id="breadcrumb"></ul>
+                </nav>
+              </div>
+            </div>
+            <div class="level-right">
+              <div class="level-item">
+                <div class="file has-name is-small mr-2">
+                  <label class="file-label">
+                    <input class="file-input" type="file" id="upload-file" multiple>
+                    <span class="file-cta">
+                      <span class="file-icon"><i class="fas fa-upload"></i></span>
+                      <span class="file-label">Choose files</span>
+                    </span>
+                    <span class="file-name" id="upload-file-name">No file selected</span>
+                  </label>
+                </div>
+              </div>
+              <div class="level-item">
+                <button id="upload-btn" class="button is-primary is-small">Upload</button>
+              </div>
+            </div>
+          </div>
+
+          <table id="objects-table" class="table is-striped is-hoverable is-fullwidth">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Last Modified</th>
+                <th class="col-etag">ETag</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- API Keys Section -->
       <div id="keys-section" class="section" hidden>
-        <div class="section-header">
-          <h2>API Keys</h2>
-          <button id="open-create-key-btn">Create Key</button>
-        </div>
-
-        <div id="new-key-banner" class="banner" hidden>
-          <strong>New API Key Created</strong> &mdash; copy the secret now, it won't be shown again.
-          <div class="key-display">
-            <div><label>Access Key:</label> <code id="new-ak"></code></div>
-            <div><label>Secret Key:</label> <code id="new-sk"></code></div>
+        <div class="container" style="max-width: 1100px;">
+          <div class="level">
+            <div class="level-left">
+              <div class="level-item"><h2 class="title is-5">API Keys</h2></div>
+            </div>
+            <div class="level-right">
+              <div class="level-item">
+                <button id="open-create-key-btn" class="button is-primary is-small">Create Key</button>
+              </div>
+            </div>
           </div>
-          <button id="dismiss-key-banner" class="btn-small">Dismiss</button>
-        </div>
 
-        <table id="keys-table">
-          <thead>
-            <tr>
-              <th>Access Key</th>
-              <th>Description</th>
-              <th>Created</th>
-              <th class="col-perms">Permissions</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+          <div id="new-key-banner" class="notification is-success is-light" hidden>
+            <button id="dismiss-key-banner" class="delete"></button>
+            <strong>New API Key Created</strong> &mdash; copy the secret now, it won't be shown again.
+            <div class="key-display mt-2">
+              <div><label class="has-text-weight-semibold">Access Key:</label> <code id="new-ak"></code></div>
+              <div><label class="has-text-weight-semibold">Secret Key:</label> <code id="new-sk"></code></div>
+            </div>
+          </div>
+
+          <table id="keys-table" class="table is-striped is-hoverable is-fullwidth">
+            <thead>
+              <tr>
+                <th>Access Key</th>
+                <th>Description</th>
+                <th>Created</th>
+                <th class="col-perms">Permissions</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Key Permissions Modal -->
-      <div id="perm-modal" class="modal-overlay">
-        <div class="modal">
-          <h3>Edit API Key</h3>
-          <p id="perm-modal-key-info"></p>
-          <div class="field-group">
-            <label class="field-label">Description</label>
-            <input type="text" id="perm-modal-desc" placeholder="Description">
-          </div>
-          <div id="perm-bucket-list"></div>
-          <div class="modal-actions">
-            <button id="perm-save-btn">Save</button>
-            <button id="perm-cancel-btn" class="btn-text">Cancel</button>
-          </div>
+      <div id="perm-modal" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+          <header class="modal-card-head">
+            <p class="modal-card-title">Edit API Key</p>
+            <button class="delete modal-close-btn" aria-label="close"></button>
+          </header>
+          <section class="modal-card-body">
+            <p id="perm-modal-key-info" class="mb-3"></p>
+            <div class="field">
+              <label class="label is-small">Description</label>
+              <div class="control">
+                <input class="input" type="text" id="perm-modal-desc" placeholder="Description">
+              </div>
+            </div>
+            <div id="perm-bucket-list"></div>
+          </section>
+          <footer class="modal-card-foot">
+            <button id="perm-save-btn" class="button is-primary">Save</button>
+            <button id="perm-cancel-btn" class="button">Cancel</button>
+          </footer>
         </div>
       </div>
 
       <!-- Create Key Modal -->
-      <div id="create-key-modal" class="modal-overlay">
-        <div class="modal">
-          <h3>Create API Key</h3>
-          <div class="field-group">
-            <label class="field-label">Description</label>
-            <input type="text" id="create-key-desc" placeholder="Optional description">
-          </div>
-          <div class="field-group">
-            <label class="field-label">Bucket Permissions</label>
-            <div id="create-key-bucket-list"></div>
-          </div>
-          <div class="modal-actions">
-            <button id="create-key-confirm-btn">Create</button>
-            <button id="create-key-cancel-btn" class="btn-text">Cancel</button>
-          </div>
+      <div id="create-key-modal" class="modal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+          <header class="modal-card-head">
+            <p class="modal-card-title">Create API Key</p>
+            <button class="delete modal-close-btn" aria-label="close"></button>
+          </header>
+          <section class="modal-card-body">
+            <div class="field">
+              <label class="label is-small">Description</label>
+              <div class="control">
+                <input class="input" type="text" id="create-key-desc" placeholder="Optional description">
+              </div>
+            </div>
+            <div class="field">
+              <label class="label is-small">Bucket Permissions</label>
+              <div id="create-key-bucket-list"></div>
+            </div>
+          </section>
+          <footer class="modal-card-foot">
+            <button id="create-key-confirm-btn" class="button is-primary">Create</button>
+            <button id="create-key-cancel-btn" class="button">Cancel</button>
+          </footer>
         </div>
       </div>
     </div>

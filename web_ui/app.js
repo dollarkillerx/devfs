@@ -79,18 +79,25 @@
   // ── Modal helpers ──────────────────────────────────────────────────────
 
   function openModal(sel) {
-    $(sel).classList.add('is-visible');
+    $(sel).classList.add('is-active');
   }
 
   function closeModal(sel) {
-    $(sel).classList.remove('is-visible');
+    $(sel).classList.remove('is-active');
   }
 
-  // Click-outside-to-close for modals
+  // Click modal-background to close
   document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('is-visible')) {
-      e.target.classList.remove('is-visible');
+    if (e.target.classList.contains('modal-background')) {
+      e.target.closest('.modal').classList.remove('is-active');
     }
+  });
+
+  // X (delete) button to close modals
+  $$('.modal-close-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.closest('.modal').classList.remove('is-active');
+    });
   });
 
   // ── Pages ──────────────────────────────────────────────────────────────
@@ -107,7 +114,7 @@
   }
 
   function switchSection(name) {
-    $$('.nav-links a').forEach(a => a.classList.toggle('active', a.dataset.page === name));
+    $$('.navbar-start .navbar-item').forEach(a => a.classList.toggle('is-active', a.dataset.page === name));
     $('#buckets-section').hidden = name !== 'buckets';
     $('#bucket-detail-section').hidden = true;
     $('#keys-section').hidden = name !== 'keys';
@@ -150,9 +157,19 @@
     showLogin();
   });
 
+  // ── Navbar burger (mobile) ────────────────────────────────────────────
+
+  $$('.navbar-burger').forEach(burger => {
+    burger.addEventListener('click', () => {
+      const target = document.getElementById(burger.dataset.target);
+      burger.classList.toggle('is-active');
+      target.classList.toggle('is-active');
+    });
+  });
+
   // ── Navigation ─────────────────────────────────────────────────────────
 
-  $$('.nav-links a').forEach(a => {
+  $$('.navbar-start .navbar-item').forEach(a => {
     a.addEventListener('click', (e) => {
       e.preventDefault();
       switchSection(a.dataset.page);
@@ -183,7 +200,7 @@
           <td>${formatDate(b.created)}</td>
           <td>${b.policy.public_read ? 'Yes' : 'No'}</td>
           <td>${b.policy.public_write ? 'Yes' : 'No'}</td>
-          <td><button class="btn-small btn-danger" data-delete-bucket="${esc(b.name)}">Delete</button></td>
+          <td><button class="button is-small is-danger" data-delete-bucket="${esc(b.name)}">Delete</button></td>
         `;
         tbody.appendChild(tr);
       });
@@ -305,9 +322,9 @@
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><span class="folder-link" data-prefix="${esc(prefix)}">${ICON_FOLDER} ${esc(display)}</span></td>
-          <td class="text-muted">-</td>
-          <td class="text-muted">-</td>
-          <td class="text-muted col-etag">-</td>
+          <td class="has-text-grey">-</td>
+          <td class="has-text-grey">-</td>
+          <td class="has-text-grey col-etag">-</td>
           <td></td>
         `;
         tbody.appendChild(tr);
@@ -324,8 +341,8 @@
           <td>${formatDate(obj.last_modified)}</td>
           <td class="col-etag"><code>${esc(obj.etag)}</code></td>
           <td>
-            <button class="btn-text btn-small" data-download-obj="${esc(obj.key)}">Download</button>
-            <button class="btn-small btn-danger" data-delete-obj="${esc(obj.key)}">Delete</button>
+            <button class="button is-small is-text" data-download-obj="${esc(obj.key)}">Download</button>
+            <button class="button is-small is-danger" data-delete-obj="${esc(obj.key)}">Delete</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -350,36 +367,59 @@
   function updateBreadcrumb() {
     const bc = $('#breadcrumb');
     bc.innerHTML = '';
-    const root = document.createElement('a');
-    root.href = '#';
-    root.textContent = currentBucket;
-    root.addEventListener('click', (e) => { e.preventDefault(); currentPrefix = ''; loadObjects(); });
-    bc.appendChild(root);
+
+    // Root item
+    const rootLi = document.createElement('li');
+    const rootA = document.createElement('a');
+    rootA.href = '#';
+    rootA.textContent = currentBucket;
+    rootA.addEventListener('click', (e) => { e.preventDefault(); currentPrefix = ''; loadObjects(); });
+    rootLi.appendChild(rootA);
+
+    if (!currentPrefix) {
+      rootLi.classList.add('is-active');
+    }
+    bc.appendChild(rootLi);
 
     if (currentPrefix) {
       const parts = currentPrefix.split('/').filter(Boolean);
       let path = '';
       parts.forEach((part, i) => {
         path += part + '/';
-        const sep = document.createElement('span');
-        sep.textContent = ' / ';
-        bc.appendChild(sep);
-
+        const li = document.createElement('li');
+        if (i === parts.length - 1) {
+          li.classList.add('is-active');
+        }
         const a = document.createElement('a');
         a.href = '#';
         a.textContent = part;
         const p = path; // capture
         a.addEventListener('click', (e) => { e.preventDefault(); currentPrefix = p; loadObjects(); });
-        bc.appendChild(a);
+        li.appendChild(a);
+        bc.appendChild(li);
       });
     }
   }
+
+  // ── File input display ────────────────────────────────────────────────
+
+  $('#upload-file').addEventListener('change', () => {
+    const files = $('#upload-file').files;
+    const nameEl = $('#upload-file-name');
+    if (files.length === 0) {
+      nameEl.textContent = 'No file selected';
+    } else if (files.length === 1) {
+      nameEl.textContent = files[0].name;
+    } else {
+      nameEl.textContent = files.length + ' files selected';
+    }
+  });
 
   // ── Upload ─────────────────────────────────────────────────────────────
 
   $('#upload-btn').addEventListener('click', async () => {
     const files = $('#upload-file').files;
-    if (!files.length) return;
+    if (!files.length) { showToast('Please select files to upload', 'error'); return; }
 
     for (const file of files) {
       const form = new FormData();
@@ -404,6 +444,7 @@
     }
 
     $('#upload-file').value = '';
+    $('#upload-file-name').textContent = 'No file selected';
     loadObjects();
   });
 
@@ -474,10 +515,10 @@
           <td>${esc(k.description)}</td>
           <td>${formatDate(k.created_at)}</td>
           <td class="col-perms">
-            <span class="text-muted">${esc(perms)}</span>
-            <button class="btn-text btn-small" data-edit-key="${esc(k.id)}">Edit</button>
+            <span class="has-text-grey">${esc(perms)}</span>
+            <button class="button is-small is-text" data-edit-key="${esc(k.id)}">Edit</button>
           </td>
-          <td><button class="btn-small btn-danger" data-delete-key="${esc(k.id)}">Delete</button></td>
+          <td><button class="button is-small is-danger" data-delete-key="${esc(k.id)}">Delete</button></td>
         `;
         tbody.appendChild(tr);
       });
@@ -509,14 +550,18 @@
     list.innerHTML = '';
     allBuckets.forEach(bucket => {
       const row = document.createElement('div');
-      row.className = 'perm-row';
+      row.className = 'columns is-mobile is-vcentered mb-0 py-2';
       row.innerHTML = `
-        <label>${esc(bucket)}</label>
-        <select data-bucket="${esc(bucket)}">
-          <option value="none" selected>None</option>
-          <option value="read">Read</option>
-          <option value="read_write">Read/Write</option>
-        </select>
+        <div class="column"><label class="has-text-weight-medium">${esc(bucket)}</label></div>
+        <div class="column is-narrow">
+          <div class="select is-small">
+            <select data-bucket="${esc(bucket)}">
+              <option value="none" selected>None</option>
+              <option value="read">Read</option>
+              <option value="read_write">Read/Write</option>
+            </select>
+          </div>
+        </div>
       `;
       list.appendChild(row);
     });
@@ -581,14 +626,18 @@
     allBuckets.forEach(bucket => {
       const current = (key.buckets || {})[bucket] || 'none';
       const row = document.createElement('div');
-      row.className = 'perm-row';
+      row.className = 'columns is-mobile is-vcentered mb-0 py-2';
       row.innerHTML = `
-        <label>${esc(bucket)}</label>
-        <select data-bucket="${esc(bucket)}">
-          <option value="none" ${current === 'none' ? 'selected' : ''}>None</option>
-          <option value="read" ${current === 'read' ? 'selected' : ''}>Read</option>
-          <option value="read_write" ${current === 'read_write' ? 'selected' : ''}>Read/Write</option>
-        </select>
+        <div class="column"><label class="has-text-weight-medium">${esc(bucket)}</label></div>
+        <div class="column is-narrow">
+          <div class="select is-small">
+            <select data-bucket="${esc(bucket)}">
+              <option value="none" ${current === 'none' ? 'selected' : ''}>None</option>
+              <option value="read" ${current === 'read' ? 'selected' : ''}>Read</option>
+              <option value="read_write" ${current === 'read_write' ? 'selected' : ''}>Read/Write</option>
+            </select>
+          </div>
+        </div>
       `;
       list.appendChild(row);
     });
