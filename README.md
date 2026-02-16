@@ -1,16 +1,33 @@
 # devfs
 
+[English](./README.md) | [中文](./README.zh.md) | [日本語](./README.ja.md)
+
 A simple S3-compatible file server for development workflows.
 
 ![](./image.png)
 
 ## Quick Start
 
-Build and run:
+Start devfs with Docker Compose:
 
 ```bash
-cargo build --release
-./target/release/devfs
+docker compose up -d
+```
+
+Configure via a `.env` file in the project root:
+
+```env
+DEVFS_PORT=9000
+DEVFS_ACCESS_KEY=mykey
+DEVFS_SECRET_KEY=mysecret
+DEVFS_WEB_USER=admin
+DEVFS_WEB_PASSWORD=secretpass
+```
+
+Stop the service:
+
+```bash
+docker compose down
 ```
 
 The server starts on `http://127.0.0.1:9000` by default. Try it with the AWS CLI:
@@ -120,36 +137,6 @@ func main() {
 		Key:    aws.String("hello.txt"),
 	})
 }
-```
-
-## Docker Compose
-
-Start devfs with Docker Compose for a quick containerized deployment:
-
-```bash
-docker compose up -d
-# or
-make compose-up
-```
-
-Configure via environment variables or a `.env` file in the project root:
-
-```env
-DEVFS_PORT=9000
-DEVFS_ACCESS_KEY=mykey
-DEVFS_SECRET_KEY=mysecret
-DEVFS_WEB_USER=admin
-DEVFS_WEB_PASSWORD=secretpass
-```
-
-The data volume (`devfs-data`) persists across container restarts.
-
-Stop the service:
-
-```bash
-docker compose down
-# or
-make compose-down
 ```
 
 ## Configuration
