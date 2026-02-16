@@ -11,8 +11,14 @@ pub async fn s3_operation_middleware(
     mut request: Request,
     next: Next,
 ) -> Result<Response, S3Error> {
-    let method = request.method().clone();
     let path = request.uri().path().to_string();
+
+    // Skip web UI paths — they have their own auth
+    if path.starts_with("/_web") {
+        return Ok(next.run(request).await);
+    }
+
+    let method = request.method().clone();
     let query = request.uri().query().map(|q| q.to_string());
 
     // Parse path segments, percent-decode each
@@ -28,9 +34,9 @@ pub async fn s3_operation_middleware(
 
     let operation = parse_operation(&method, &segments, query.as_deref())?;
 
-    // Auth check
-    if let Some(ref auth_config) = state.auth_config {
-        auth::verify_request(&request, auth_config)?;
+    // Auth check — supports admin key, managed keys, and bucket policies
+    if state.auth_config.is_some() || state.web_auth_config.is_some() {
+        auth::verify_s3_request(&request, &state, &operation)?;
     }
 
     request.extensions_mut().insert(operation);

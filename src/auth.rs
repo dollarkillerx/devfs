@@ -3,11 +3,80 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::error::S3Error;
-use crate::types::AuthConfig;
+use crate::types::{AppState, AuthConfig, BucketPermission, S3Operation};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Verify an S3 request with support for admin keys, managed keys, and bucket policies.
+pub fn verify_s3_request(
+    request: &Request,
+    state: &AppState,
+    operation: &S3Operation,
+) -> Result<(), S3Error> {
+    let bucket = operation.bucket_name();
+
+    // 1. Check bucket public access policy
+    if let Some(b) = bucket {
+        let ks = state.key_store.read().unwrap();
+        let policy = ks.get_policy(b);
+        if operation.is_read_only() && policy.public_read {
+            return Ok(());
+        }
+        if !operation.is_read_only() && policy.public_write {
+            return Ok(());
+        }
+    }
+
+    // 2. No auth configured at all → allow everything
+    if state.auth_config.is_none() && state.web_auth_config.is_none() {
+        return Ok(());
+    }
+
+    // 3. Extract access_key from Authorization header
+    let access_key = extract_access_key(request)?;
+
+    // 4. Check admin key (from [auth] config)
+    if let Some(ref admin) = state.auth_config {
+        if access_key == admin.access_key {
+            verify_signature(request, &admin.secret_key)?;
+            return Ok(()); // Admin = full access
+        }
+    }
+
+    // 5. Check managed keys (from key_store)
+    let ks = state.key_store.read().unwrap();
+    if let Some(entry) = ks.find_by_access_key(access_key) {
+        verify_signature(request, &entry.secret_key)?;
+
+        // Check per-bucket permission
+        if let Some(b) = bucket {
+            let perm = entry.buckets.get(b).unwrap_or(&BucketPermission::None);
+            match perm {
+                BucketPermission::ReadWrite => return Ok(()),
+                BucketPermission::Read if operation.is_read_only() => return Ok(()),
+                _ => return Err(S3Error::access_denied()),
+            }
+        }
+        // No bucket (ListBuckets) — allow if key has any bucket permissions
+        if !entry.buckets.is_empty() {
+            return Ok(());
+        }
+        return Err(S3Error::access_denied());
+    }
+
+    Err(S3Error::access_denied())
+}
+
+/// Legacy single-key verification (kept for backward compat with tests)
 pub fn verify_request(request: &Request, config: &AuthConfig) -> Result<(), S3Error> {
+    let access_key = extract_access_key(request)?;
+    if access_key != config.access_key {
+        return Err(S3Error::access_denied());
+    }
+    verify_signature(request, &config.secret_key)
+}
+
+fn extract_access_key<'a>(request: &'a Request) -> Result<&'a str, S3Error> {
     let auth_header = request
         .headers()
         .get("authorization")
@@ -18,26 +87,28 @@ pub fn verify_request(request: &Request, config: &AuthConfig) -> Result<(), S3Er
         None => return Err(S3Error::access_denied()),
     };
 
-    // Parse AWS4-HMAC-SHA256 Credential=.../..., SignedHeaders=..., Signature=...
     if !auth_str.starts_with("AWS4-HMAC-SHA256") {
         return Err(S3Error::access_denied());
     }
 
-    // Extract credential
     let credential = extract_field(auth_str, "Credential=")
         .ok_or_else(S3Error::access_denied)?;
 
-    // Verify access key matches
-    let access_key = credential
+    credential
         .split('/')
         .next()
+        .ok_or_else(S3Error::access_denied)
+}
+
+fn verify_signature(request: &Request, secret_key: &str) -> Result<(), S3Error> {
+    let auth_str = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
         .ok_or_else(S3Error::access_denied)?;
 
-    if access_key != config.access_key {
-        return Err(S3Error::access_denied());
-    }
-
-    // Extract signed headers and signature
+    let credential = extract_field(auth_str, "Credential=")
+        .ok_or_else(S3Error::access_denied)?;
     let signed_headers = extract_field(auth_str, "SignedHeaders=")
         .ok_or_else(S3Error::access_denied)?;
     let provided_signature = extract_field(auth_str, "Signature=")
@@ -99,7 +170,7 @@ pub fn verify_request(request: &Request, config: &AuthConfig) -> Result<(), S3Er
     );
 
     // Derive signing key
-    let signing_key = derive_signing_key(&config.secret_key, date, region, service);
+    let signing_key = derive_signing_key(secret_key, date, region, service);
 
     // Calculate signature
     let mut mac =
@@ -180,7 +251,6 @@ mod tests {
     #[test]
     fn derive_signing_key_aws_test_vector() {
         // AWS Signature Version 4 Test Suite
-        // https://docs.aws.amazon.com/general/latest/gr/signature-v4-test-suite.html
         let key = derive_signing_key(
             "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
             "20120215",

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>devfs - Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/_web/assets/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-page" class="page">
+      <div class="login-card">
+        <h1>devfs</h1>
+        <p class="subtitle">S3-Compatible Storage</p>
+        <form id="login-form">
+          <input type="text" id="login-user" placeholder="Username" autocomplete="username" required>
+          <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password" required>
+          <button type="submit">Sign In</button>
+          <div id="login-error" class="error" hidden></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard-page" class="page" hidden>
+      <nav>
+        <span class="brand">devfs</span>
+        <div class="nav-links">
+          <a href="#" data-page="buckets" class="active">Buckets</a>
+          <a href="#" data-page="keys">API Keys</a>
+        </div>
+        <button id="logout-btn" class="btn-text">Logout</button>
+      </nav>
+
+      <!-- Buckets Section -->
+      <div id="buckets-section" class="section">
+        <div class="section-header">
+          <h2>Buckets</h2>
+          <div class="inline-form">
+            <input type="text" id="new-bucket-name" placeholder="Bucket name">
+            <button id="create-bucket-btn">Create</button>
+          </div>
+        </div>
+        <table id="buckets-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Created</th>
+              <th>Public Read</th>
+              <th>Public Write</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Bucket Detail -->
+      <div id="bucket-detail-section" class="section" hidden>
+        <div class="section-header">
+          <button id="back-to-buckets" class="btn-text">&larr; Back</button>
+          <h2 id="bucket-detail-name"></h2>
+        </div>
+
+        <div class="policy-bar">
+          <label><input type="checkbox" id="policy-public-read"> Public Read</label>
+          <label><input type="checkbox" id="policy-public-write"> Public Write</label>
+          <button id="save-policy-btn" class="btn-small">Save Policy</button>
+        </div>
+
+        <div class="object-toolbar">
+          <div id="breadcrumb"></div>
+          <div class="upload-area">
+            <input type="file" id="upload-file" multiple>
+            <button id="upload-btn">Upload</button>
+          </div>
+        </div>
+
+        <table id="objects-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Last Modified</th>
+              <th class="col-etag">ETag</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- API Keys Section -->
+      <div id="keys-section" class="section" hidden>
+        <div class="section-header">
+          <h2>API Keys</h2>
+          <button id="open-create-key-btn">Create Key</button>
+        </div>
+
+        <div id="new-key-banner" class="banner" hidden>
+          <strong>New API Key Created</strong> &mdash; copy the secret now, it won't be shown again.
+          <div class="key-display">
+            <div><label>Access Key:</label> <code id="new-ak"></code></div>
+            <div><label>Secret Key:</label> <code id="new-sk"></code></div>
+          </div>
+          <button id="dismiss-key-banner" class="btn-small">Dismiss</button>
+        </div>
+
+        <table id="keys-table">
+          <thead>
+            <tr>
+              <th>Access Key</th>
+              <th>Description</th>
+              <th>Created</th>
+              <th class="col-perms">Permissions</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Key Permissions Modal -->
+      <div id="perm-modal" class="modal-overlay">
+        <div class="modal">
+          <h3>Edit API Key</h3>
+          <p id="perm-modal-key-info"></p>
+          <div class="field-group">
+            <label class="field-label">Description</label>
+            <input type="text" id="perm-modal-desc" placeholder="Description">
+          </div>
+          <div id="perm-bucket-list"></div>
+          <div class="modal-actions">
+            <button id="perm-save-btn">Save</button>
+            <button id="perm-cancel-btn" class="btn-text">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Create Key Modal -->
+      <div id="create-key-modal" class="modal-overlay">
+        <div class="modal">
+          <h3>Create API Key</h3>
+          <div class="field-group">
+            <label class="field-label">Description</label>
+            <input type="text" id="create-key-desc" placeholder="Optional description">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Bucket Permissions</label>
+            <div id="create-key-bucket-list"></div>
+          </div>
+          <div class="modal-actions">
+            <button id="create-key-confirm-btn">Create</button>
+            <button id="create-key-cancel-btn" class="btn-text">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script src="/_web/assets/app.js"></script>
+</body>
+</html>

@@ -19,14 +19,26 @@ async fn main() {
     let addr = config.addr();
     let state = config.into_app_state();
 
-    let app = Router::new()
-        .fallback(dispatch)
-        .layer(axum_mw::from_fn_with_state(
-            state.clone(),
-            s3_operation_middleware,
-        ))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    let app = if state.web_auth_config.is_some() {
+        Router::new()
+            .merge(devfs::web::router(state.clone()))
+            .fallback(dispatch)
+            .layer(axum_mw::from_fn_with_state(
+                state.clone(),
+                s3_operation_middleware,
+            ))
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
+    } else {
+        Router::new()
+            .fallback(dispatch)
+            .layer(axum_mw::from_fn_with_state(
+                state.clone(),
+                s3_operation_middleware,
+            ))
+            .layer(TraceLayer::new_for_http())
+            .with_state(state)
+    };
 
     tracing::info!("devfs listening on {}", addr);
 

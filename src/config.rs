@@ -1,10 +1,12 @@
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use clap::Parser;
 use serde::Deserialize;
 
+use crate::keystore::KeyStore;
 use crate::storage::FsStorage;
-use crate::types::{AppState, AuthConfig};
+use crate::types::{AppState, AuthConfig, WebAuthConfig};
 
 #[derive(Parser)]
 #[command(name = "devfs", about = "S3-compatible object storage for development")]
@@ -29,6 +31,14 @@ struct Cli {
     #[arg(long)]
     secret_key: Option<String>,
 
+    /// Web management UI username
+    #[arg(long)]
+    web_user: Option<String>,
+
+    /// Web management UI password
+    #[arg(long)]
+    web_password: Option<String>,
+
     /// Path to config file (default: devfs.toml in current directory)
     #[arg(long)]
     config: Option<PathBuf>,
@@ -46,6 +56,13 @@ struct FileConfig {
 struct FileAuthConfig {
     access_key: Option<String>,
     secret_key: Option<String>,
+    web: Option<FileWebAuthConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileWebAuthConfig {
+    user: Option<String>,
+    password: Option<String>,
 }
 
 pub struct Config {
@@ -54,6 +71,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
+    pub web_user: Option<String>,
+    pub web_password: Option<String>,
 }
 
 impl Config {
@@ -82,20 +101,39 @@ impl Config {
             .or(file_config.data_dir)
             .unwrap_or_else(|| PathBuf::from("./data"));
 
-        let (file_ak, file_sk) = file_config
+        let (file_ak, file_sk, file_web) = file_config
             .auth
-            .map(|a| (a.access_key, a.secret_key))
+            .map(|a| (a.access_key, a.secret_key, a.web))
+            .unwrap_or((None, None, None));
+
+        let (file_web_user, file_web_password) = file_web
+            .map(|w| (w.user, w.password))
             .unwrap_or((None, None));
 
+        // Filter empty strings — treat "" as None
         let access_key = cli
             .access_key
             .or_else(|| std::env::var("DEVFS_ACCESS_KEY").ok())
-            .or(file_ak);
+            .or(file_ak)
+            .filter(|s| !s.is_empty());
 
         let secret_key = cli
             .secret_key
             .or_else(|| std::env::var("DEVFS_SECRET_KEY").ok())
-            .or(file_sk);
+            .or(file_sk)
+            .filter(|s| !s.is_empty());
+
+        let web_user = cli
+            .web_user
+            .or_else(|| std::env::var("DEVFS_WEB_USER").ok())
+            .or(file_web_user)
+            .filter(|s| !s.is_empty());
+
+        let web_password = cli
+            .web_password
+            .or_else(|| std::env::var("DEVFS_WEB_PASSWORD").ok())
+            .or(file_web_password)
+            .filter(|s| !s.is_empty());
 
         Config {
             host,
@@ -103,6 +141,8 @@ impl Config {
             data_dir,
             access_key,
             secret_key,
+            web_user,
+            web_password,
         }
     }
 
@@ -115,9 +155,38 @@ impl Config {
             _ => None,
         };
 
+        let web_auth_config = match (self.web_user, self.web_password) {
+            (Some(user), Some(pass)) => Some(WebAuthConfig {
+                username: user,
+                password: pass,
+            }),
+            _ => None,
+        };
+
+        let key_store = if web_auth_config.is_some() {
+            KeyStore::load(&self.data_dir)
+        } else {
+            KeyStore::empty()
+        };
+
+        if web_auth_config.is_some() {
+            tracing::info!("web management UI enabled at /_web/");
+        }
+
+        // Generate random JWT secret (32 bytes, hex-encoded)
+        let jwt_secret = {
+            use rand::Rng;
+            let mut bytes = [0u8; 32];
+            rand::thread_rng().fill(&mut bytes);
+            hex::encode(bytes)
+        };
+
         AppState {
             storage: FsStorage::new(&self.data_dir),
             auth_config,
+            web_auth_config,
+            key_store: Arc::new(RwLock::new(key_store)),
+            jwt_secret,
         }
     }
 
@@ -204,5 +273,43 @@ port = 3000
         let config = load_file_config(Some(std::path::Path::new("/nonexistent/devfs.toml")));
         assert!(config.host.is_none());
         assert!(config.port.is_none());
+    }
+
+    #[test]
+    fn file_config_deserialize_with_web_auth() {
+        let toml = r#"
+[auth]
+access_key = "admin-ak"
+secret_key = "admin-sk"
+
+[auth.web]
+user = "admin"
+password = "secretpass"
+"#;
+        let config: FileConfig = toml::from_str(toml).unwrap();
+        let auth = config.auth.unwrap();
+        assert_eq!(auth.access_key.unwrap(), "admin-ak");
+        let web = auth.web.unwrap();
+        assert_eq!(web.user.unwrap(), "admin");
+        assert_eq!(web.password.unwrap(), "secretpass");
+    }
+
+    #[test]
+    fn file_config_deserialize_web_auth_only() {
+        let toml = r#"
+[auth]
+access_key = ""
+secret_key = ""
+
+[auth.web]
+user = "admin"
+password = "pass"
+"#;
+        let config: FileConfig = toml::from_str(toml).unwrap();
+        let auth = config.auth.unwrap();
+        // Empty strings should be present but will be filtered in Config::load()
+        assert_eq!(auth.access_key.unwrap(), "");
+        let web = auth.web.unwrap();
+        assert_eq!(web.user.unwrap(), "admin");
     }
 }

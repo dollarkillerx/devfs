@@ -37,6 +37,8 @@ Configuration is resolved in order: **CLI flags > environment variables > config
 | Data directory | `--data-dir` | `DEVFS_DATA_DIR` | `data_dir` | `./data` |
 | Access key | `--access-key` | `DEVFS_ACCESS_KEY` | `auth.access_key` | _(none)_ |
 | Secret key | `--secret-key` | `DEVFS_SECRET_KEY` | `auth.secret_key` | _(none)_ |
+| Web user | `--web-user` | `DEVFS_WEB_USER` | `auth.web.user` | _(none)_ |
+| Web password | `--web-password` | `DEVFS_WEB_PASSWORD` | `auth.web.password` | _(none)_ |
 | Config file | `--config` | — | — | `devfs.toml` |
 
 Example `devfs.toml`:
@@ -49,6 +51,10 @@ data_dir = "/tmp/devfs"
 [auth]
 access_key = "mykey"
 secret_key = "mysecret"
+
+[auth.web]
+user = "admin"
+password = "secretpass"
 ```
 
 ## Supported Operations
@@ -84,7 +90,40 @@ secret_key = "mysecret"
 
 ## Authentication
 
-Authentication is **optional**. It is enabled when both `access_key` and `secret_key` are configured. When enabled, devfs validates AWS Signature Version 4 (SigV4) headers, so standard AWS SDKs and CLI tools work out of the box.
+Authentication is **optional** and depends on which credentials are configured:
+
+| auth keys | auth.web | Behavior |
+|-----------|----------|----------|
+| empty | not set | No auth — all S3 requests allowed |
+| set | not set | Single admin key, SigV4 required, all buckets |
+| empty | set | Web UI only, managed API keys with per-bucket permissions |
+| set | set | Admin key (full access) + managed keys with per-bucket permissions |
+
+When auth keys are configured, devfs validates AWS Signature Version 4 (SigV4) headers, so standard AWS SDKs and CLI tools work out of the box. Empty strings are treated as unset.
+
+Bucket policies (`public_read`, `public_write`) can allow unauthenticated access to specific buckets even when authentication is enabled.
+
+## Web Management UI
+
+Enable the web UI by configuring `[auth.web]` with a username and password. Once enabled, the UI is available at `http://host:port/_web/`.
+
+Features:
+- Bucket management (create, delete)
+- Object browser with upload and download
+- API key management (create, revoke)
+- Per-bucket permission assignment for API keys
+
+Sessions are cookie-based with a 24-hour TTL and stored in memory (lost on server restart).
+
+## API Keys & Permissions
+
+When the web UI is enabled, you can create and manage multiple API keys through it. Each key can be granted per-bucket permission levels:
+
+- **none** — no access (default)
+- **read** — GetObject, HeadObject, ListObjectsV2
+- **read_write** — full read + PutObject, DeleteObject
+
+Key data is persisted in `{data_dir}/.devfs/keys.json`. Bucket policies are stored in `{data_dir}/.devfs/bucket_policies.json`.
 
 ## Storage Layout
 
@@ -143,12 +182,17 @@ Run with `CI=true cargo bench --features bench-internals`.
 
 | File | LOC | Description |
 |------|-----|-------------|
-| `storage.rs` | 764 | Filesystem-backed object storage |
-| `middleware.rs` | 317 | S3 request parsing and routing |
-| `config.rs` | 208 | CLI, env, and TOML config loading |
-| `auth.rs` | 196 | SigV4 signature verification |
-| `xml.rs` | 182 | S3 XML response serialization |
+| `storage.rs` | 1044 | Filesystem-backed object storage |
+| `web/api.rs` | 425 | Web management REST API handlers |
+| `middleware.rs` | 323 | S3 request parsing and routing |
+| `config.rs` | 308 | CLI, env, and TOML config loading |
+| `auth.rs` | 266 | SigV4 signature verification + multi-key auth |
+| `keystore.rs` | 260 | API key and bucket policy persistence |
 | `error.rs` | 228 | S3 error codes and XML error responses |
-| `dispatcher.rs` | 131 | Operation dispatch to handlers |
-| `types.rs` | 59 | Shared types and data structures |
-| `main.rs` | 45 | Server entrypoint |
+| `xml.rs` | 182 | S3 XML response serialization |
+| `types.rs` | 135 | Shared types and data structures |
+| `dispatcher.rs` | 134 | Operation dispatch to handlers |
+| `session.rs` | 72 | In-memory session management |
+| `web/mod.rs` | 52 | Web UI router and session middleware |
+| `main.rs` | 47 | Server entrypoint |
+| `web/static_files.rs` | 37 | Embedded static file serving |
