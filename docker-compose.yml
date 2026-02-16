@@ -1,6 +1,6 @@
 services:
   devfs:
-    image: dollarkillerx/devfs:latest
+    image: dollarkiller/devfs:latest
     container_name: devfs
     ports:
       - "${DEVFS_PORT:-9000}:9000"
