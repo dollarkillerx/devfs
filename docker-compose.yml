@@ -1,0 +1,19 @@
+services:
+  devfs:
+    image: dollarkillerx/devfs:latest
+    container_name: devfs
+    ports:
+      - "${DEVFS_PORT:-9000}:9000"
+    volumes:
+      - devfs-data:/data
+    environment:
+      - DEVFS_HOST=0.0.0.0
+      - DEVFS_PORT=9000
+      - DEVFS_ACCESS_KEY=${DEVFS_ACCESS_KEY:-}
+      - DEVFS_SECRET_KEY=${DEVFS_SECRET_KEY:-}
+      - DEVFS_WEB_USER=${DEVFS_WEB_USER:-}
+      - DEVFS_WEB_PASSWORD=${DEVFS_WEB_PASSWORD:-}
+    restart: unless-stopped
+
+volumes:
+  devfs-data:

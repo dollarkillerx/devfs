@@ -26,6 +26,102 @@ aws --endpoint-url http://127.0.0.1:9000 s3 cp hello.txt s3://my-bucket/hello.tx
 aws --endpoint-url http://127.0.0.1:9000 s3 cp s3://my-bucket/hello.txt downloaded.txt
 ```
 
+### Python (boto3)
+
+```python
+import boto3
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url="http://127.0.0.1:9000",
+    aws_access_key_id="mykey",
+    aws_secret_access_key="mysecret",
+    region_name="us-east-1",
+)
+
+# Create a bucket
+s3.create_bucket(Bucket="my-bucket")
+
+# Upload
+s3.put_object(Bucket="my-bucket", Key="hello.txt", Body=b"Hello, devfs!")
+
+# Download
+resp = s3.get_object(Bucket="my-bucket", Key="hello.txt")
+print(resp["Body"].read().decode())
+
+# List objects
+for obj in s3.list_objects_v2(Bucket="my-bucket").get("Contents", []):
+    print(obj["Key"], obj["Size"])
+
+# Delete
+s3.delete_object(Bucket="my-bucket", Key="hello.txt")
+```
+
+### Go (aws-sdk-go-v2)
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+func main() {
+	cfg, _ := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("mykey", "mysecret", ""),
+		),
+	)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String("http://127.0.0.1:9000")
+		o.UsePathStyle = true
+	})
+
+	ctx := context.TODO()
+
+	// Create a bucket
+	client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("my-bucket")})
+
+	// Upload
+	client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String("my-bucket"),
+		Key:    aws.String("hello.txt"),
+		Body:   strings.NewReader("Hello, devfs!"),
+	})
+
+	// Download
+	out, _ := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String("my-bucket"),
+		Key:    aws.String("hello.txt"),
+	})
+	body, _ := io.ReadAll(out.Body)
+	fmt.Println(string(body))
+
+	// List objects
+	list, _ := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String("my-bucket"),
+	})
+	for _, obj := range list.Contents {
+		fmt.Printf("%s %d\n", *obj.Key, obj.Size)
+	}
+
+	// Delete
+	client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String("my-bucket"),
+		Key:    aws.String("hello.txt"),
+	})
+}
+```
+
 ## Configuration
 
 Configuration is resolved in order: **CLI flags > environment variables > config file > defaults**.
