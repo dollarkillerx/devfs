@@ -1,5 +1,6 @@
 services:
   devfs:
+    build: .
     image: dollarkiller/devfs:latest
     container_name: devfs
     ports:
