@@ -100,6 +100,25 @@ fn extract_access_key<'a>(request: &'a Request) -> Result<&'a str, S3Error> {
         .ok_or_else(S3Error::access_denied)
 }
 
+fn canonicalize_query_string(query: Option<&str>) -> String {
+    let Some(q) = query else {
+        return String::new();
+    };
+    if q.is_empty() {
+        return String::new();
+    }
+    let mut pairs: Vec<(&str, &str)> = q
+        .split('&')
+        .map(|p| p.split_once('=').unwrap_or((p, "")))
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 fn verify_signature(request: &Request, secret_key: &str) -> Result<(), S3Error> {
     let auth_str = request
         .headers()
@@ -126,7 +145,7 @@ fn verify_signature(request: &Request, secret_key: &str) -> Result<(), S3Error> 
     // Build canonical request
     let method = request.method().as_str();
     let uri = request.uri().path();
-    let query = request.uri().query().unwrap_or("");
+    let query = canonicalize_query_string(request.uri().query());
 
     // Build canonical headers
     let header_names: Vec<&str> = signed_headers.split(';').collect();
@@ -262,5 +281,34 @@ mod tests {
             hex_str,
             "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d"
         );
+    }
+
+    #[test]
+    fn canonicalize_query_string_sorts_params() {
+        let result = canonicalize_query_string(Some("z=1&a=2&m=3"));
+        assert_eq!(result, "a=2&m=3&z=1");
+    }
+
+    #[test]
+    fn canonicalize_query_string_empty() {
+        assert_eq!(canonicalize_query_string(None), "");
+        assert_eq!(canonicalize_query_string(Some("")), "");
+    }
+
+    #[test]
+    fn canonicalize_query_string_single_param() {
+        assert_eq!(canonicalize_query_string(Some("key=val")), "key=val");
+    }
+
+    #[test]
+    fn canonicalize_query_string_sorts_by_value_on_tie() {
+        let result = canonicalize_query_string(Some("a=z&a=a"));
+        assert_eq!(result, "a=a&a=z");
+    }
+
+    #[test]
+    fn canonicalize_query_string_no_value() {
+        let result = canonicalize_query_string(Some("b&a"));
+        assert_eq!(result, "a=&b=");
     }
 }

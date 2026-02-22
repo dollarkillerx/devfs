@@ -1,6 +1,7 @@
 use axum::extract::{Request, State};
 use axum::response::Response;
 
+use crate::chunked;
 use crate::error::{S3Error, S3ErrorCode};
 use crate::handlers;
 use crate::types::{AppState, S3Operation};
@@ -44,12 +45,34 @@ pub async fn dispatch(
             handlers::object::list_objects_v2(&state, &bucket, &params).await
         }
         S3Operation::PutObject { bucket, key } => {
-            let content_length = request
+            let is_chunked = request
                 .headers()
-                .get("content-length")
+                .get("x-amz-content-sha256")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
+                .map(|v| v.starts_with("STREAMING-"))
+                .unwrap_or(false);
+
+            let content_length = if is_chunked {
+                request
+                    .headers()
+                    .get("x-amz-decoded-content-length")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+            } else {
+                request
+                    .headers()
+                    .get("content-length")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+            };
+
             let body = request.into_body();
+            let body = if is_chunked {
+                chunked::decode_aws_chunked(body)
+            } else {
+                body
+            };
+
             handlers::object::put_object(
                 &state,
                 &bucket,

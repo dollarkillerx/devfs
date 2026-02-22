@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod chunked;
 pub mod config;
 pub mod dispatcher;
 pub mod error;
