@@ -31,6 +31,8 @@ rand = "0.8"
 jsonwebtoken = "9"
 futures-core = "0.3.32"
 http-body = "1.0.1"
+crc32fast = "1"
+base64 = "0.22"
 
 [features]
 bench-internals = []

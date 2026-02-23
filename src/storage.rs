@@ -1,6 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use std::hash::Hasher as _;
+
+use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::Utc;
 use http_body_util::BodyExt;
 use md5::{Digest, Md5};
@@ -25,6 +28,12 @@ pub struct GetObjectResult {
 pub struct GetObjectStreamResult {
     pub metadata: ObjectMetadata,
     pub file: tokio::fs::File,
+}
+
+#[derive(Debug)]
+pub struct PutResult {
+    pub etag: String,
+    pub checksum_crc32: String,
 }
 
 pub struct ListObjectsV2Result {
@@ -156,7 +165,7 @@ impl FsStorage {
         body: bytes::Bytes,
         content_type: Option<String>,
         custom_metadata: HashMap<String, String>,
-    ) -> Result<String, S3Error> {
+    ) -> Result<PutResult, S3Error> {
         let bucket_path = self.bucket_path(bucket);
         if !bucket_path.exists() {
             return Err(S3Error::no_such_bucket(bucket));
@@ -166,6 +175,12 @@ impl FsStorage {
         let mut hasher = Md5::new();
         hasher.update(&body);
         let etag = format!("\"{}\"", hex::encode(hasher.finalize()));
+
+        // Compute CRC32
+        let mut crc_hasher = crc32fast::Hasher::new();
+        crc_hasher.update(&body);
+        let crc32_value = crc_hasher.finalize();
+        let checksum_crc32 = STANDARD.encode(crc32_value.to_be_bytes());
 
         // Write object file
         let obj_path = self.object_path(bucket, key);
@@ -196,6 +211,7 @@ impl FsStorage {
             content_length: body.len() as u64,
             etag: etag.clone(),
             last_modified: now,
+            checksum_crc32: Some(checksum_crc32.clone()),
             custom_metadata,
         };
 
@@ -212,7 +228,7 @@ impl FsStorage {
             .await
             .map_err(|e| S3Error::internal(format!("Failed to write metadata: {}", e)))?;
 
-        Ok(etag)
+        Ok(PutResult { etag, checksum_crc32 })
     }
 
     pub async fn put_object_stream(
@@ -223,7 +239,7 @@ impl FsStorage {
         content_type: Option<String>,
         custom_metadata: HashMap<String, String>,
         _content_length: Option<u64>,
-    ) -> Result<String, S3Error> {
+    ) -> Result<PutResult, S3Error> {
         let bucket_path = self.bucket_path(bucket);
         if !bucket_path.exists() {
             return Err(S3Error::no_such_bucket(bucket));
@@ -241,8 +257,9 @@ impl FsStorage {
             .await
             .map_err(|e| S3Error::internal(format!("Failed to create file: {}", e)))?;
 
-        // Stream body frames to disk, computing MD5 incrementally
+        // Stream body frames to disk, computing MD5 and CRC32 incrementally
         let mut hasher = Md5::new();
+        let mut crc_hasher = crc32fast::Hasher::new();
         let mut total_bytes: u64 = 0;
         let mut body = body;
 
@@ -251,6 +268,7 @@ impl FsStorage {
                 Some(Ok(frame)) => {
                     if let Ok(data) = frame.into_data() {
                         hasher.update(&data);
+                        crc_hasher.write(&data);
                         total_bytes += data.len() as u64;
                         if let Err(e) = file.write_all(&data).await {
                             // Clean up partial file on write error
@@ -275,6 +293,8 @@ impl FsStorage {
             .map_err(|e| S3Error::internal(format!("Failed to flush file: {}", e)))?;
 
         let etag = format!("\"{}\"", hex::encode(hasher.finalize()));
+        let crc32_value = crc_hasher.finalize();
+        let checksum_crc32 = STANDARD.encode(crc32_value.to_be_bytes());
 
         // Determine content type
         let ct = content_type.unwrap_or_else(|| {
@@ -290,6 +310,7 @@ impl FsStorage {
             content_length: total_bytes,
             etag: etag.clone(),
             last_modified: now,
+            checksum_crc32: Some(checksum_crc32.clone()),
             custom_metadata,
         };
 
@@ -306,7 +327,7 @@ impl FsStorage {
             .await
             .map_err(|e| S3Error::internal(format!("Failed to write metadata: {}", e)))?;
 
-        Ok(etag)
+        Ok(PutResult { etag, checksum_crc32 })
     }
 
     #[cfg(any(test, feature = "bench-internals"))]
@@ -782,7 +803,7 @@ mod tests {
         let mut meta = HashMap::new();
         meta.insert("author".to_string(), "alice".to_string());
 
-        let etag = storage
+        let put_result = storage
             .put_object(
                 "b",
                 "hello.txt",
@@ -796,7 +817,7 @@ mod tests {
         let result = storage.get_object("b", "hello.txt").await.unwrap();
         assert_eq!(result.body, b"hello world");
         assert_eq!(result.metadata.content_type, "text/plain");
-        assert_eq!(result.metadata.etag, etag);
+        assert_eq!(result.metadata.etag, put_result.etag);
         assert_eq!(
             result.metadata.custom_metadata.get("author").unwrap(),
             "alice"
@@ -810,7 +831,7 @@ mod tests {
         storage.create_bucket("b").await.unwrap();
 
         let body = axum::body::Body::from("streamed upload data");
-        let etag = storage
+        let put_result = storage
             .put_object_stream(
                 "b",
                 "uploaded.txt",
@@ -826,7 +847,7 @@ mod tests {
         let result = storage.get_object("b", "uploaded.txt").await.unwrap();
         assert_eq!(result.body, b"streamed upload data");
         assert_eq!(result.metadata.content_type, "text/plain");
-        assert_eq!(result.metadata.etag, etag);
+        assert_eq!(result.metadata.etag, put_result.etag);
         assert_eq!(result.metadata.content_length, 20);
     }
 

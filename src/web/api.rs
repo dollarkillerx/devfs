@@ -250,10 +250,10 @@ async fn upload_object(
         .put_object_stream(&bucket, &key, body, Some(ct), HashMap::new(), Some(size))
         .await
     {
-        Ok(etag) => Json(serde_json::json!({
+        Ok(result) => Json(serde_json::json!({
             "ok": true,
             "key": key,
-            "etag": etag,
+            "etag": result.etag,
             "size": size,
         }))
         .into_response(),

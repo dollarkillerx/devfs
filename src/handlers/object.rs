@@ -19,20 +19,19 @@ pub async fn put_object(
     custom_metadata: HashMap<String, String>,
     content_length: Option<u64>,
 ) -> Result<Response, S3Error> {
-    let etag = state
+    let result = state
         .storage
         .put_object_stream(bucket, key, body, content_type, custom_metadata, content_length)
         .await?;
 
-    Ok((
-        StatusCode::OK,
-        [
-            ("etag", etag),
-            ("server", "devfs".to_string()),
-            ("x-amz-request-id", uuid::Uuid::new_v4().to_string()),
-        ],
-    )
-        .into_response())
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("etag", &result.etag)
+        .header("server", "devfs")
+        .header("x-amz-request-id", uuid::Uuid::new_v4().to_string())
+        .header("x-amz-checksum-crc32", &result.checksum_crc32)
+        .body(Body::empty())
+        .map_err(|e| S3Error::internal(e.to_string()))
 }
 
 pub async fn get_object(
@@ -51,6 +50,10 @@ pub async fn get_object(
         .header("last-modified", http_date(&meta.last_modified))
         .header("server", "devfs")
         .header("x-amz-request-id", uuid::Uuid::new_v4().to_string());
+
+    if let Some(ref crc32) = meta.checksum_crc32 {
+        builder = builder.header("x-amz-checksum-crc32", crc32);
+    }
 
     for (k, v) in &meta.custom_metadata {
         builder = builder.header(format!("x-amz-meta-{}", k), v);
@@ -96,6 +99,10 @@ pub async fn head_object(
         .header("last-modified", http_date(&meta.last_modified))
         .header("server", "devfs")
         .header("x-amz-request-id", uuid::Uuid::new_v4().to_string());
+
+    if let Some(ref crc32) = meta.checksum_crc32 {
+        builder = builder.header("x-amz-checksum-crc32", crc32);
+    }
 
     for (k, v) in &meta.custom_metadata {
         builder = builder.header(format!("x-amz-meta-{}", k), v);

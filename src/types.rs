@@ -118,6 +118,8 @@ pub struct ObjectMetadata {
     pub etag: String,
     pub last_modified: String,
     #[serde(default)]
+    pub checksum_crc32: Option<String>,
+    #[serde(default)]
     pub custom_metadata: HashMap<String, String>,
 }
 
